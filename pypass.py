@@ -2,7 +2,7 @@
 
 import pandas as pd
 from sqlalchemy import create_engine, text
-import hashlib, binascii, os, pathlib, datetime, argparse, base64
+import hashlib, binascii, os, pathlib, datetime, argparse, base64, getpass, sys
 from dataclasses import dataclass, field, asdict
 from functools import wraps
 from typing import Optional
@@ -10,6 +10,13 @@ from rich import print, inspect
 from rich.console import Console
 from rich.prompt import Prompt
 from rich.table import Table
+from rich.pretty import pprint
+from rich.layout import Layout
+from rich.panel import Panel
+from rich.live import Live
+from rich.theme import Theme
+from prompt_toolkit import PromptSession
+from prompt_toolkit.shortcuts import button_dialog
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
@@ -89,9 +96,9 @@ class SQLManager:
         df = pd.DataFrame(asdict(data))
         try:
             df.to_sql('users', con=self.engine, if_exists='append', index=False)
-            print("User registered successfully.")
+            return True
         except Exception as e:
-            print(f'Error: Username {data.username} may already exist in Database, please try again\n')
+            return False
     
     def authenticate_user(self, username, password):
         """Authenticate a user by their username and password."""
@@ -116,7 +123,6 @@ class SQLManager:
                 with self.engine.connect() as conn:
                     # Pass parameters as a dictionary
                     conn.execute(update_query, {'session_expires': session_expires, 'user_id': self.user_table.user_id})
-                print(f"User authenticated successfully. Session expires at {session_expires}")
                 return True
             print('authentication failed')
             return False
@@ -131,12 +137,39 @@ class SQLManager:
         print("Password added successfully.")
         return
     
-    def load_table(self):
-        """Load and display passwords related to a specific user from the SQLite database."""
+    def get_df(self):
         query = "SELECT * FROM passwords WHERE user_id = ?"
         df = pd.read_sql_query(query, con=self.engine, params=(self.user_table.user_id,))
-        console, table = pretty(df)
-        return console.print(table)
+        return df
+
+    def load_table(self, console):
+        """Load and display passwords related to a specific user from the SQLite database."""
+        df = self.get_df()
+        decrypted_df = df
+        cols = ['name', 'username', 'password', 'category', 'notes']
+        for col in cols:
+            # Ensure that the data is in bytes, then decrypt
+            decrypted_df[col] = df[col].apply(lambda x: decrypt_data(self.dek, x) if isinstance(x, bytes) else x)
+        print_paginated_table(console, decrypted_df, 10)
+
+    def get_pass(self, name):
+        query = """
+        SELECT password
+        FROM passwords
+        WHERE name = ?
+        AND user_id = ?
+        """
+        try:
+            result = pd.read_sql_query(query, con=self.engine, params=(name, self.user_table.user_id,))
+            if not result.empty:
+                password = result.values[0][0]
+                return decrypt_data(password)
+            else:
+                return None  # Or raise an exception, or handle the "not found" case as appropriate
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            # Optionally, handle or re-raise the error depending on your error handling strategy
+            return None
     
 ########################################################
         
@@ -159,18 +192,6 @@ def verify_password(stored_password, provided_password):
                                   100000)
     pwdhash = binascii.hexlify(pwdhash).decode('ascii')
     return pwdhash == stored_password
-
-def pretty(df:pd.DataFrame):
-    console = Console()
-    table = Table(show_header=True, header_style="bold magenta")
-    # Add columns to the table
-    for col in df.columns:
-        table.add_column(col)
-    # Add rows to the table
-    for _, row in df.iterrows():
-        table.add_row(*[str(value) for value in row])
-
-    return console, table
 
 ########################################################
 
@@ -247,23 +268,7 @@ def decrypt_data(dek, encrypted_data):
 #     return False
 
 # @auth_required
-# def get_pass(username):
-#     query = """
-#     SELECT encrypted_password
-#     FROM passwords
-#     WHERE username = ?
-#     """
-#     result = pd.read_sql_query(query, con=engine, params=(username,))
-#     return decrypt_data(result.values[0][0])
 
-# # @auth_required
-# def add_password_for_user(username):
-#     password = getpass.getpass(f'Password entry for username {username}: ')  # Use getpass to hide the password input
-#     encrypted_password = encrypt_data(password)
-#     df = pd.DataFrame({'user_id': [user_id], 'username': username, 'encrypted_password': [encrypted_password]})
-#     df.to_sql('passwords', con=engine, if_exists='append', index=False)
-#     print("Password added successfully.")
-#     return
 
 
 def setup_new_user(db: SQLManager, username, password)-> bytes:
@@ -271,7 +276,7 @@ def setup_new_user(db: SQLManager, username, password)-> bytes:
     edek, dek = encrypt_dek(kek)
     hashed_password = hash_password(password)
     data = UserTable(username=[username], hashed_password=[hashed_password], salt=[salt], edek=[edek])
-    db.register_user(data)
+    return db.register_user(data)
 
 
 def pass_prompt(dek)-> PassTable:
@@ -294,50 +299,101 @@ def pass_prompt(dek)-> PassTable:
         notes=[notes]
     )
 
-def main():
-    console = Console()
-    console.print("Welcome to Secure Password Manager", style="bold blue")
-    auth = False
+def clear_terminal():
+    '''ANSI escape code to clear the screen but keep history'''
+    sys.stdout.write('\033[H\033[0J')
+    sys.stdout.flush()
+
+
+def pp_prompt(console: Console, prompt_text: str, style: str = '#00CB05', password: bool = False):
+    console.print(f'    {prompt_text}: ', style=style, end="")
+    if password:
+        return getpass.getpass(prompt='')
+    else:
+        return input()
+    
+def auth_register(console: Console, auth: bool = False):
+    prompt: str = (
+        'Choose Action:\n'
+        '\n'
+        '    1. Add New User\n'
+        '    2. Login\n'
+        '    3. Quite\n'
+    )
     while auth is False:
-        action = Prompt.ask("Choose action: [1. Add New User?, 2. Login?, 3. Quit?]")
+        console.print(Panel(prompt,
+                            title="Register & Authentication", border_style="bright_blue"), style='aqua')
+        action = pp_prompt(console, "Selection", style='green')
         db = SQLManager()
         match action:
             case '1': # Add New User
-                username = Prompt.ask("Enter your master username: ")
-                password = Prompt.ask("Enter your master password: ", password=True)
-                retype_password = Prompt.ask("Retype your master password: ", password=True)
+                username = pp_prompt(console, "Enter your master username")
+                password = pp_prompt(console, "Enter your master password", password=True)
+                retype_password = pp_prompt(console, "Retype your master password", password=True)
                 if password == retype_password:
                     if not pathlib.Path('py_pass.db').exists():
                         db.setup_user_table()
 
-                setup_new_user(db=db, username=username, password=password)
+                if setup_new_user(db=db, username=username, password=password):
+                    console.print(Panel("User registered successfully"), justify="center", style='yellow')
+                else:
+                    console.print(Panel("User registration failed"), justify="center", style='red')
         
             case '2': # Login
-                username = Prompt.ask("Enter your master username")
-                password = Prompt.ask("Enter your master password", password=True)
+                username = pp_prompt(console, "Enter your master username")
+                password = pp_prompt(console, "Enter your master password", password=True)
                 if db.authenticate_user(username=username, password=password):
                     auth = True
+                    console.print(Panel(f'User {username} Authenticated Successfully'), justify="center", style='yellow')
         
             case '3':
-                print('Exiting...')
+                console.print('    Exiting...\n', style='green')
                 exit(0)
             case _:
-                print('Unrecognised Option')
+                console.print('    Unrecognised Option\n', style='red')
                 continue
+    return db
 
+def get_filtered_items(df: pd.DataFrame, keyword)-> pd.DataFrame:
+    keyword = str(keyword).lower()
+    mask = df.map(lambda x: keyword in str(x).lower())
+    # Use 'any' to filter rows where any column matches the keyword
+    return df[mask.any(axis=1)]
+
+
+def print_paginated_table(console: Console, df: pd.DataFrame, page_size):
+    start_row = 0
+
+    while start_row < df.shape[0]:
+        table = Table(show_header=True, header_style="bold magenta", row_styles=['dim', ''], show_edge=False, highlight=True)
+        
+        for col in df.columns:
+            table.add_column(col)
+        
+        # Add rows to the table
+        for _, row in df.iloc[start_row:start_row + page_size].iterrows():
+            table.add_row(*[str(value) for value in row])
+        
+        console.print(Panel(table, title='Password Table', border_style="bright_blue"), justify='center')
+        
+        start_row += page_size
+        pp_prompt(console, 'Press Enter to continue', style='green')
+
+
+def get_data(console: Console, db: SQLManager):
     inapp: bool = True
+    prompt = (
+        'Choose Action:\n'
+        '\n'
+        '    1. Add New Password Entry\n'
+        '    2. Get Password\n'
+        '    3. See Password Table\n'
+        '    4. Quit\n'
+    )
     while inapp:
-        prompt = (
-            'Choose Action:\n'
-            '\n'
-            '    1. Add New Password Entry\n'
-            '    2. Get Password\n'
-            '    3. See Password Table\n'
-            '    4. Quit\n'
-            '\n'
-            'Selection'
-        )
-        action = Prompt.ask(prompt)
+        console.print(Panel(prompt,
+                            title="Password Management", border_style="bright_blue"), style='aqua')
+        action = pp_prompt(console, "Selection", style='green')
         match action:
             case '1':
                 data: PassTable = pass_prompt(db.dek)
@@ -345,20 +401,61 @@ def main():
                     continue
                 db.add_password_for_user(data)
             case '2':
-                pass
+                # Creating a session to handle input
+                df = db.get_df()
+                decrypted_df = df
+                cols = ['name', 'username', 'password', 'category', 'notes']
+                for col in cols:
+                    # Ensure that the data is in bytes, then decrypt
+                    decrypted_df[col] = df[col].apply(lambda x: decrypt_data(db.dek, x) if isinstance(x, bytes) else x)
+                # Get user input for filtering
+                keyword = pp_prompt(console, 'Enter a keyword to filter items', style='green')
+                
+                # Filter items based on input
+                filtered_df: pd.DataFrame = get_filtered_items(df, keyword)
+
+                print_paginated_table(console, filtered_df, 10)
             case '3':
-                db.load_table()
-                Prompt.ask('Press Enter to continue...')
+                db.load_table(console)
             case '4':
-                print('Exiting...')
+                console.print('    Exiting...\n', style='green')
                 inapp = False
             case _:
-                print('Unrecognised Option')
+                console.print('    Unrecognised Option\n', style='red')
                 continue
+
+
+def clear_terminal_and_scroll_data():
+    command = 'clear' if os.name == 'posix' else 'cls'
+    os.system(command)
+
+
+def main():
+    pypass_theme = Theme({
+        "aqua": "#00A6A9", 
+        "purple": "#C500B7", 
+        "red": "#D10015",
+        "green": '#00CB05',
+        'yellow': '#F2E900'
+    })
+    clear_terminal()
+    console = Console(theme=pypass_theme)
+    
+    # Display a panel with some instructions or information
+    console.print(Panel("Welcome to PyPass! Please follow the instructions below.",
+                        title="Welcome", border_style="bright_blue"), style='aqua',
+                        justify="center")
+
+    db: SQLManager = auth_register(console, False)
+    get_data(console, db)
+
 
  
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    finally:
+        clear_terminal_and_scroll_data()
 
     # parser = argparse.ArgumentParser(description="Simple Commandline Password Manager using Pandas and SQLite")
     # parser.add_argument('--add', '-a', nargs='*', help="Add new password entry. app.py -a website_username")
