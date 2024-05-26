@@ -3,6 +3,8 @@
 import pandas as pd
 from sqlalchemy import create_engine, text
 import hashlib, binascii, os, pathlib, datetime, argparse, base64, getpass, sys, pyclip, threading, time
+from threading import Timer
+from queue import Queue
 from dataclasses import dataclass, field, asdict
 from functools import wraps
 from typing import Optional
@@ -26,32 +28,38 @@ from cryptography.fernet import Fernet
 
 #################### Clipboard #########################
 
-
-def clear_clipboard(timeout=30):
-    """Clears the clipboard after the timeout period."""
-    time.sleep(timeout)  # Wait for the specified timeout
-    pyclip.clear()
+def user_interaction(console, q):
+    console.print("    Press ENTER to stop the countdown and clear clipboard early...\n\n", style='purple')
+    input()
+    q.put('stop')
 
 def copy_to_clipboard(console, text, timeout=30):
-    """Copies text to the clipboard and clears it after a specified timeout."""
+    q = Queue()
     pyclip.copy(text)
-    threading.Thread(target=clear_clipboard, args=(timeout,)).start()
-    with Live(Panel(f"Text Copied to clipboard will be cleared in {timeout} seconds.", title="Info"), console=console, refresh_per_second=10) as live:
-        for i in range(timeout):
-            time.sleep(1)  # Simulate some worklive
-            live.update(Panel(f"{i+1} seconds until password cleared from clipboard", title="Countdown"))
-    console.print(Panel("Process completed!", title="Finished", border_style="green"))
-
-
-
-
+    user_thread = threading.Thread(target=user_interaction, args=(console, q))
+    user_thread.start()
+    
+    with Live(Panel(f"    [purple]Clipboard will be cleared in {timeout} seconds...[/purple]", title="Clipboard Timeout", border_style='green'), console=console, refresh_per_second=1) as live:
+        for i in range(timeout-1, 0, -1):
+            time.sleep(1)
+            if not q.empty():
+                live.update(Panel("    [purple]Clipboard clearing stopped by user[/purple]", title="Clipboard Timeout", border_style='green'))
+                pyclip.clear()
+                user_thread.join()
+                return
+            live.update(Panel(f"    [purple]{i} seconds until clipboard is cleared[/purple]", title="Clipboard Timeout", border_style='green'))
+        else:
+            live.update(Panel("    [purple]Clipboard cleared after timeout. Press ENTER to Continue[/purple]", title='Clipboard Timeout', border_style='green'))
+            pyclip.clear()
+            user_thread.join()
+            return
 
 #################### Database Utils ####################
 
 @dataclass
 class UserTable:
     username: list[str]
-    hashed_password: list[bytes]
+    hashed_password: list[str]
     salt: list[bytes]
     edek: list[bytes]
     session_expires: Optional[datetime.datetime] = field(default=None, init=False)
@@ -90,7 +98,7 @@ class SQLManager:
                             CREATE TABLE IF NOT EXISTS users (
                             user_id INTEGER PRIMARY KEY,
                             username TEXT UNIQUE NOT NULL,
-                            hashed_password BLOB NOT NULL,
+                            hashed_password TEXT NOT NULL,
                             salt BLOB NOT NULL,
                             edek BLOB NOT NULL,
                             session_expires DATETIME
@@ -311,7 +319,7 @@ def decrypt_data(dek, encrypted_data):
 
 
 
-def setup_new_user(db: SQLManager, username, password)-> bytes:
+def setup_new_user(db: SQLManager, username, password)-> bool:
     kek, salt = derive_kek(password)
     edek, dek = encrypt_dek(kek)
     hashed_password = hash_password(password)
@@ -446,7 +454,7 @@ def get_data(console: Console, db: SQLManager):
                 # Creating a session to handle input
                 df = db.get_df()
                 decrypted_df = df
-                cols = ['name', 'username', 'password', 'category', 'notes']
+                cols = ['name', 'username', 'category', 'notes']
                 for col in cols:
                     # Ensure that the data is in bytes, then decrypt
                     decrypted_df[col] = df[col].apply(lambda x: decrypt_data(db.dek, x) if isinstance(x, bytes) else x)
@@ -456,19 +464,23 @@ def get_data(console: Console, db: SQLManager):
                 # Filter items based on input
                 filtered_df: pd.DataFrame = get_filtered_items(df, keyword)
 
-                print_paginated_table(console, filtered_df, 10)
+                response = print_paginated_table(console, filtered_df, 10)
+                if response:
+                    password = db.get_pass_by_id(response)
+                    if password:
+                        copy_to_clipboard(console, password, timeout=30)
+
             case '3':
                 response = db.load_table(console)
                 if response:
                     password = db.get_pass_by_id(response)
                     if password:
                         copy_to_clipboard(console, password, timeout=30)
-                        console.print(Panel(password, title='Password Data', border_style='bright_blue'), style='purple')
             case '4':
                 console.print('    Exiting...\n', style='green')
                 inapp = False
             case _:
-                console.print('    Unrecognised Option\n', style='red')
+                console.print(f'    Unrecognised Option: {action}\n', style='red')
                 continue
 
 
