@@ -2,7 +2,7 @@
 
 import pandas as pd
 from sqlalchemy import create_engine, text
-import hashlib, binascii, os, pathlib, datetime, argparse, base64, getpass, sys
+import hashlib, binascii, os, pathlib, datetime, argparse, base64, getpass, sys, pyclip, threading, time
 from dataclasses import dataclass, field, asdict
 from functools import wraps
 from typing import Optional
@@ -15,8 +15,6 @@ from rich.layout import Layout
 from rich.panel import Panel
 from rich.live import Live
 from rich.theme import Theme
-from prompt_toolkit import PromptSession
-from prompt_toolkit.shortcuts import button_dialog
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
@@ -24,6 +22,28 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.fernet import Fernet
+
+
+#################### Clipboard #########################
+
+
+def clear_clipboard(timeout=30):
+    """Clears the clipboard after the timeout period."""
+    time.sleep(timeout)  # Wait for the specified timeout
+    pyclip.clear()
+
+def copy_to_clipboard(console, text, timeout=30):
+    """Copies text to the clipboard and clears it after a specified timeout."""
+    pyclip.copy(text)
+    threading.Thread(target=clear_clipboard, args=(timeout,)).start()
+    with Live(Panel(f"Text Copied to clipboard will be cleared in {timeout} seconds.", title="Info"), console=console, refresh_per_second=10) as live:
+        for i in range(timeout):
+            time.sleep(1)  # Simulate some worklive
+            live.update(Panel(f"{i+1} seconds until password cleared from clipboard", title="Countdown"))
+    console.print(Panel("Process completed!", title="Finished", border_style="green"))
+
+
+
 
 
 #################### Database Utils ####################
@@ -146,11 +166,11 @@ class SQLManager:
         """Load and display passwords related to a specific user from the SQLite database."""
         df = self.get_df()
         decrypted_df = df
-        cols = ['name', 'username', 'password', 'category', 'notes']
+        cols = ['name', 'username', 'category', 'notes']
         for col in cols:
             # Ensure that the data is in bytes, then decrypt
             decrypted_df[col] = df[col].apply(lambda x: decrypt_data(self.dek, x) if isinstance(x, bytes) else x)
-        print_paginated_table(console, decrypted_df, 10)
+        return print_paginated_table(console, decrypted_df, 10)
 
     def get_pass(self, name):
         query = """
@@ -163,13 +183,33 @@ class SQLManager:
             result = pd.read_sql_query(query, con=self.engine, params=(name, self.user_table.user_id,))
             if not result.empty:
                 password = result.values[0][0]
-                return decrypt_data(password)
+                return decrypt_data(self.dek, password)
             else:
                 return None  # Or raise an exception, or handle the "not found" case as appropriate
         except Exception as e:
             print(f"An error occurred: {e}")
             # Optionally, handle or re-raise the error depending on your error handling strategy
             return None
+
+    def get_pass_by_id(self, id):
+        query = """
+        SELECT password
+        FROM passwords
+        WHERE id = ?
+        AND user_id = ?
+        """
+        try:
+            result = pd.read_sql_query(query, con=self.engine, params=(id, self.user_table.user_id,))
+            if not result.empty:
+                password = result.values[0][0]
+                return decrypt_data(self.dek, password)
+            else:
+                return None  # Or raise an exception, or handle the "not found" case as appropriate
+        except Exception as e:
+            print(f"An error occurred: {e}")
+            # Optionally, handle or re-raise the error depending on your error handling strategy
+            return None
+
     
 ########################################################
         
@@ -377,7 +417,9 @@ def print_paginated_table(console: Console, df: pd.DataFrame, page_size):
         console.print(Panel(table, title='Password Table', border_style="bright_blue"), justify='center')
         
         start_row += page_size
-        pp_prompt(console, 'Press Enter to continue', style='green')
+        response = pp_prompt(console, 'Press ENTER to continue or select Password ID', style='green')
+        if response:
+            return response
 
 
 def get_data(console: Console, db: SQLManager):
@@ -416,7 +458,12 @@ def get_data(console: Console, db: SQLManager):
 
                 print_paginated_table(console, filtered_df, 10)
             case '3':
-                db.load_table(console)
+                response = db.load_table(console)
+                if response:
+                    password = db.get_pass_by_id(response)
+                    if password:
+                        copy_to_clipboard(console, password, timeout=30)
+                        console.print(Panel(password, title='Password Data', border_style='bright_blue'), style='purple')
             case '4':
                 console.print('    Exiting...\n', style='green')
                 inapp = False
