@@ -25,6 +25,8 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.fernet import Fernet
 
+from navigation import file_system_nav
+
 
 #################### Clipboard #########################
 
@@ -110,11 +112,11 @@ class SQLManager:
                             CREATE TABLE IF NOT EXISTS passwords (
                             id INTEGER PRIMARY KEY,
                             user_id INTEGER,
-                            name BLOB NOT NULL,
-                            username BLOB NOT NULL,
-                            password BLOB NOT NULL,
-                            category BLOB NOT NULL,
-                            notes BLOB NOT NULL,
+                            name BLOB,
+                            username BLOB,
+                            password BLOB,
+                            category BLOB,
+                            notes BLOB,
                             FOREIGN KEY (user_id) REFERENCES users(user_id)
                             );
                             """))
@@ -165,6 +167,16 @@ class SQLManager:
         print("Password added successfully.")
         return
     
+    def file_to_sql(self, df: pd.DataFrame):
+        df['user_id'] = self.user_table.user_id
+        cols = ['name', 'username', 'password', 'category', 'notes']
+        for col in cols:
+            # Ensure that the data is in bytes, then decrypt
+            df[col] = df[col].apply(lambda x: encrypt_data(self.dek, str(x)))
+        df.to_sql('passwords', con=self.engine, if_exists='append', index=False)
+        print('    File Uploaded into Database Successfully')
+        time.sleep(3)
+
     def get_df(self):
         query = "SELECT * FROM passwords WHERE user_id = ?"
         df = pd.read_sql_query(query, con=self.engine, params=(self.user_table.user_id,))
@@ -202,7 +214,7 @@ class SQLManager:
     def get_pass_by_id(self, id):
         query = """
         SELECT password
-        FROM passwords
+    FROM passwords
         WHERE id = ?
         AND user_id = ?
         """
@@ -429,6 +441,28 @@ def print_paginated_table(console: Console, df: pd.DataFrame, page_size):
         if response:
             return response
 
+def parse_file_columns(console: Console, df: pd.DataFrame):
+    col_map: dict = {
+            'name': ['name', 'website', 'domain', 'url', 'site', 'service'],
+            'username': ['username', 'user id', 'account id', 'account', 'login'],
+            'password': ['password', 'pass', 'passcode', 'secret', 'pin', 'key'],
+            'category': ['category', 'type', 'class', 'group', 'tag'],
+            'notes': ['notes', 'details', 'info', 'information', 'description']}
+
+    for col in df.columns:
+        col_found = False
+        for key, val in col_map.items():
+            if col in val:
+                df = df.rename(columns={col: key})
+                col_found = True
+        if col_found is False:
+            console.print(f'    Column not identified in CSV/JSON/YAML File: {col}', style='red')
+            time.sleep(2)
+        else:
+            col_found = False
+    return df
+    
+
 
 def get_data(console: Console, db: SQLManager):
     inapp: bool = True
@@ -438,7 +472,8 @@ def get_data(console: Console, db: SQLManager):
         '    1. Add New Password Entry\n'
         '    2. Get Password\n'
         '    3. See Password Table\n'
-        '    4. Quit\n'
+        '    4. Upload CSV, json, yaml\n'
+        '    5. Quit\n'
     )
     while inapp:
         console.print(Panel(prompt,
@@ -477,6 +512,13 @@ def get_data(console: Console, db: SQLManager):
                     if password:
                         copy_to_clipboard(console, password, timeout=30)
             case '4':
+                filename = pathlib.Path(file_system_nav())
+                if filename.exists:
+                    df = pd.read_csv(filename)
+                    df = parse_file_columns(console, df)
+                    db.file_to_sql(df)
+
+            case '5':
                 console.print('    Exiting...\n', style='green')
                 inapp = False
             case _:

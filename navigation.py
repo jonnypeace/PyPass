@@ -50,7 +50,7 @@ def update_panels(layout, path, files, dirs, dir_page=0, file_page=0, page_size=
     layout['input']['left_padding'].update(Panel(f'[bold cyan]{formatted_date_time}[/bold cyan]', border_style='blue'))
 
 
-def main():
+def file_system_nav()-> str:
     console = Console()
     layout = generate_layout()
 
@@ -107,8 +107,8 @@ def main():
             # Select file by index
             index = int(command)
             if index < len(files):
-                console.print(f"[green]File selected: {files[index]}[/]", justify="center")
-                break
+                console.print(f"[green]File selected: {current_path}/{files[index]}[/]", justify="center")
+                return f'{current_path}/{files[index]}'
             else:
                 console.print("[red]Error: Invalid file index[/]", justify="center")
         elif command == '>>':  # Next page for directories
@@ -128,10 +128,10 @@ def main():
                 file_page -= 1
                 update_panels(layout, current_path, files, dirs, dir_page, file_page, page_size)
         elif command == 'q':  # quit
-            break
+            return ''
         else:
             console.print("[red]Invalid command[/]", justify="center")
 
 if __name__ == "__main__":
-    main()
+    file_system_nav()
 
