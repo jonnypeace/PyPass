@@ -1,0 +1,6 @@
+__pycache__/
+*.bk
+prompt.py
+*.db
+testing*
+texing*
