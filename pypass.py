@@ -24,7 +24,9 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import serialization
 from cryptography.fernet import Fernet
-
+from prompt_toolkit.completion import FuzzyWordCompleter
+from prompt_toolkit import prompt as fuzzy_prompt
+from copy import copy
 from navigation import file_system_nav
 
 
@@ -211,10 +213,23 @@ class SQLManager:
             # Optionally, handle or re-raise the error depending on your error handling strategy
             return None
 
+
+    def delete_data_entry(self, entry: list):
+        query = text("DELETE FROM passwords WHERE id = :id AND user_id = :user_id")
+        with self.engine.connect() as conn:
+            with conn.begin():
+                for id in entry:
+                    try:
+                        # Ensure the parameters are passed as a tuple within a list
+                        conn.execute(query, {'id': id, 'user_id': self.user_table.user_id})
+                    except Exception as e:
+                        print(f"    An error occurred: {e}")  # Debugging output
+
+
     def get_pass_by_id(self, id):
         query = """
         SELECT password
-    FROM passwords
+        FROM passwords
         WHERE id = ?
         AND user_id = ?
         """
@@ -339,17 +354,32 @@ def setup_new_user(db: SQLManager, username, password)-> bool:
     return db.register_user(data)
 
 
-def pass_prompt(dek)-> PassTable:
-    name: bytes = encrypt_data(dek, Prompt.ask('Website'))
-    username: bytes = encrypt_data(dek, Prompt.ask('Username'))
-    password_str: str = Prompt.ask('Password', password=True)
-    confirm_password: str = Prompt.ask('Confirm Password', password=True)
+def pass_prompt(console: Console, dek)-> PassTable|bool:
+    '''
+    Add Password data using the TUI prompt
+    '''
+    console.print('    Website/Name', style='green', end='')
+    name: bytes = encrypt_data(dek, Prompt.ask(''))
+
+    console.print('    Username', style='green', end='')
+    username: bytes = encrypt_data(dek, Prompt.ask(''))
+    
+    console.print('    Password', style='green', end='')
+    password_str: str = Prompt.ask('', password=True)
+    
+    console.print('    Confirm Password', style='green', end='')
+    confirm_password: str = Prompt.ask('', password=True)
+    
     if password_str != confirm_password:
         print('Passwords do not match, try again')
         return False
     password: bytes = encrypt_data(dek, password_str)
-    category: bytes = encrypt_data(dek, Prompt.ask('Category'))
-    notes: bytes = encrypt_data(dek, Prompt.ask('Notes'))
+    
+    console.print('    Category', style='green', end='')
+    category: bytes = encrypt_data(dek, Prompt.ask(''))
+    
+    console.print('    Notes', style='green', end='')
+    notes: bytes = encrypt_data(dek, Prompt.ask(''))
 
     return PassTable(
         name=[name],
@@ -421,7 +451,7 @@ def get_filtered_items(df: pd.DataFrame, keyword)-> pd.DataFrame:
     return df[mask.any(axis=1)]
 
 
-def print_paginated_table(console: Console, df: pd.DataFrame, page_size):
+def print_paginated_table(console: Console, df: pd.DataFrame, page_size)-> int|str:
     start_row = 0
 
     while start_row < df.shape[0]:
@@ -437,9 +467,54 @@ def print_paginated_table(console: Console, df: pd.DataFrame, page_size):
         console.print(Panel(table, title='Password Table', border_style="bright_blue"), justify='center')
         
         start_row += page_size
-        response = pp_prompt(console, 'Press ENTER to continue or select Password ID', style='green')
+        response = pp_prompt(console, 'Press ENTER to continue, "q" to quit, "d" followed by Password id (or list of id) to delete password(s), or select Password ID', style='green')
         if response:
             return response
+
+
+def delete_data_entry(console: Console, response: str, db: SQLManager):
+    response_list = response.split(' ')
+    if 'd' in response_list:
+        response_list.remove('d')
+    else:
+        console.print('    Data Entry Deletion Error', style='error')
+    db.delete_data_entry(response_list)
+        
+
+
+def search_db(console:Console, db:SQLManager):
+    df: pd.DataFrame = db.get_df()
+    decrypted_df: pd.DataFrame = copy(df)
+    cols = ['name', 'username', 'category', 'notes']
+    words_set: set = set()
+    for col in cols:
+        # Ensure that the data is in bytes, then decrypt
+        decrypted_df[col] = df[col].apply(lambda x: decrypt_data(db.dek, x) if isinstance(x, bytes) else x)
+        if col != 'notes':
+            temp_set: set = set(decrypted_df[col].to_list())
+            words_set.update(temp_set)
+    # Get user input for filtering
+    fuzzy_completer = FuzzyWordCompleter(sorted(list(words_set)), WORD=True)
+    console.print('    Enter a keyword to filter items: ', style='green')
+    keyword = fuzzy_prompt(f'    ', completer=fuzzy_completer)
+
+    # Filter items based on input
+    filtered_df: pd.DataFrame = get_filtered_items(decrypted_df, keyword)
+
+    response = print_paginated_table(console, filtered_df, 10)
+    
+    if response == 'q':
+        console.print('    q selected, quiting...', style='alert')
+        return
+    if isinstance(response, str) and response.startswith('d'):
+        console.print(f'    d selected, deleting {response}...', style='alert')
+        delete_data_entry(console, response, db)
+        return
+    if response:
+        password = db.get_pass_by_id(response)
+        if password:
+            copy_to_clipboard(console, password, timeout=30)
+
 
 def parse_file_columns(console: Console, df: pd.DataFrame):
     col_map: dict = {
@@ -463,6 +538,31 @@ def parse_file_columns(console: Console, df: pd.DataFrame):
     return df
     
 
+def file_reader_to_df(console: Console, file: str|pathlib.Path)-> pd.DataFrame|None:
+    '''
+    file_reader
+    -----------
+
+    Args:
+        console: Console (for pretty printing)
+        file: str (filename for convert to dataframe. Only CSV or JSON file supported)
+    Returns:
+        pd.DateFrame (With data from csv or json file)
+    '''
+    file_dict: dict = {
+            '.csv': pd.read_csv,
+            '.json': pd.read_json
+            }
+    
+    file_suffix = pathlib.Path(file).suffix
+    
+    reader: pd.DataFrame|None = file_dict.get(file_suffix)
+    if reader is None:
+        console.print(f'File is invalid, only accept .json or .csv files with the suffix', style='error')
+        return
+    else:
+        return reader(file)
+
 
 def get_data(console: Console, db: SQLManager):
     inapp: bool = True
@@ -470,9 +570,9 @@ def get_data(console: Console, db: SQLManager):
         'Choose Action:\n'
         '\n'
         '    1. Add New Password Entry\n'
-        '    2. Get Password\n'
+        '    2. Search Password\n'
         '    3. See Password Table\n'
-        '    4. Upload CSV, json, yaml\n'
+        '    4. Upload CSV or JSON File\n'
         '    5. Quit\n'
     )
     while inapp:
@@ -481,32 +581,19 @@ def get_data(console: Console, db: SQLManager):
         action = pp_prompt(console, "Selection", style='green')
         match action:
             case '1':
-                data: PassTable = pass_prompt(db.dek)
+                data: PassTable = pass_prompt(console, db.dek)
                 if data is False:
                     continue
                 db.add_password_for_user(data)
             case '2':
-                # Creating a session to handle input
-                df = db.get_df()
-                decrypted_df = df
-                cols = ['name', 'username', 'category', 'notes']
-                for col in cols:
-                    # Ensure that the data is in bytes, then decrypt
-                    decrypted_df[col] = df[col].apply(lambda x: decrypt_data(db.dek, x) if isinstance(x, bytes) else x)
-                # Get user input for filtering
-                keyword = pp_prompt(console, 'Enter a keyword to filter items', style='green')
-                
-                # Filter items based on input
-                filtered_df: pd.DataFrame = get_filtered_items(df, keyword)
-
-                response = print_paginated_table(console, filtered_df, 10)
-                if response:
-                    password = db.get_pass_by_id(response)
-                    if password:
-                        copy_to_clipboard(console, password, timeout=30)
-
+                search_db(console, db)
             case '3':
                 response = db.load_table(console)
+                if response == 'q':
+                    continue
+                if isinstance(response, str) and response.startswith('d'):
+                    delete_data_entry(console, response, db)
+                    continue
                 if response:
                     password = db.get_pass_by_id(response)
                     if password:
@@ -514,10 +601,10 @@ def get_data(console: Console, db: SQLManager):
             case '4':
                 filename = pathlib.Path(file_system_nav())
                 if filename.exists:
-                    df = pd.read_csv(filename)
-                    df = parse_file_columns(console, df)
-                    db.file_to_sql(df)
-
+                    df = file_reader_to_df(console, filename)
+                    if df is not None:
+                        df = parse_file_columns(console, df)
+                        db.file_to_sql(df)
             case '5':
                 console.print('    Exiting...\n', style='green')
                 inapp = False
@@ -536,8 +623,11 @@ def main():
         "aqua": "#00A6A9", 
         "purple": "#C500B7", 
         "red": "#D10015",
+        "error": "#D10015",
         "green": '#00CB05',
-        'yellow': '#F2E900'
+        "success": '#00CB05',
+        'yellow': '#F2E900',
+        'alert': '#ff9933'
     })
     clear_terminal()
     console = Console(theme=pypass_theme)
