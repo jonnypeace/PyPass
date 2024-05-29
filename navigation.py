@@ -46,7 +46,7 @@ def update_panels(layout, path, files, dirs, dir_page=0, file_page=0, page_size=
     layout["main"]["files"].update(file_panel)
     now = datetime.now()
     formatted_date_time = now.strftime("%d/%m/%Y %H:%M:%S")
-    layout['input']['message'].update(Panel(f'[bold green]{formatted_date_time}[/bold green]  [bold blue]Welcome to PyPass. Navigate to your csv, json, or yaml file for uploading into Password Manager[/bold blue]', border_style='blue'))
+    layout['input']['message'].update(Panel(f'[bold green]{formatted_date_time}[/bold green]  [bold blue]Welcome to PyPass. Navigate to your csv or json file for uploading into Password Manager[/bold blue]', border_style='blue'))
     layout['input']['left_padding'].update(Panel(f'[bold cyan]{formatted_date_time}[/bold cyan]', border_style='blue'))
 
 
