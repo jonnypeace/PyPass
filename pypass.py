@@ -408,7 +408,7 @@ def auth_register(console: Console, auth: bool = False):
         '\n'
         '    1. Add New User\n'
         '    2. Login\n'
-        '    3. Quite\n'
+        '    3. Quit\n'
     )
     while auth is False:
         console.print(Panel(prompt,
