@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
 import pandas as pd
+from pandas.core.api import DataFrame
 from sqlalchemy import create_engine, text
-import hashlib, binascii, os, pathlib, datetime, argparse, base64, getpass, sys, pyclip, threading, time
+import hashlib, binascii, os, pathlib, datetime, argparse, base64, getpass, sys, pyclip, threading, time, secrets, string
 from threading import Timer
 from queue import Queue
 from dataclasses import dataclass, field, asdict
@@ -75,11 +76,11 @@ class UserTable:
 
 @dataclass
 class PassTable:
-    name: list[bytes]
-    username: list[bytes]
-    password: list[bytes]
-    category: list[bytes]
-    notes: list[bytes]
+    name: list[bytes]|bytes
+    username: list[bytes]|bytes
+    password: list[bytes]|bytes
+    category: list[bytes]|bytes
+    notes: list[bytes]|bytes
     id: Optional[int] = field(default=None, init=False)
     user_id: Optional[int] = field(default=None, init=False)
 
@@ -166,8 +167,23 @@ class SQLManager:
         data.add_user_id(self.user_table.user_id)
         df = pd.DataFrame(asdict(data))
         df.to_sql('passwords', con=self.engine, if_exists='append', index=False)
-        print("Password added successfully.")
+        print("    Password added successfully.")
         return
+
+    def update_password_for_user(self, data: PassTable, id: int):
+        query = text('''
+        UPDATE passwords 
+        SET name = :name, username = :username, password = :password, category = :category, notes = :notes
+        WHERE id = :id AND user_id = :user_id
+        ''')
+        data.add_user_id(self.user_table.user_id)
+        data.add_id(id)
+        with self.engine.connect() as conn:
+            conn.execute(query, asdict(data))
+            conn.commit()
+            print("    Password updated successfully.")
+        return
+
     
     def file_to_sql(self, df: pd.DataFrame):
         df['user_id'] = self.user_table.user_id
@@ -177,7 +193,6 @@ class SQLManager:
             df[col] = df[col].apply(lambda x: encrypt_data(self.dek, str(x)))
         df.to_sql('passwords', con=self.engine, if_exists='append', index=False)
         print('    File Uploaded into Database Successfully')
-        time.sleep(3)
 
     def get_df(self):
         query = "SELECT * FROM passwords WHERE user_id = ?"
@@ -225,6 +240,27 @@ class SQLManager:
                     except Exception as e:
                         print(f"    An error occurred: {e}")  # Debugging output
 
+    def data_entry_by_id(self, id: list[int], console: Console):
+        query = """
+        SELECT *
+        FROM passwords
+        WHERE id = ?
+        AND user_id = ?
+        """
+        try:
+            result = pd.read_sql_query(query, con=self.engine, params=(id[0], self.user_table.user_id,))
+            if not result.empty:
+                decrypted_data = result.map(lambda x: decrypt_data(self.dek, x) if isinstance(x, bytes) else x)
+                return rich_table(decrypted_data)
+            else:
+                print(f'    No result found with database query, id: {id}, result: {result}')
+                return None  # Or raise an exception, or handle the "not found" case as appropriate
+        except Exception as e:
+            print(f"    An error occurred: {e}")
+            time.sleep(2)
+            # Optionally, handle or re-raise the error depending on your error handling strategy
+            return None
+
 
     def get_pass_by_id(self, id):
         query = """
@@ -247,7 +283,13 @@ class SQLManager:
 
     
 ########################################################
-        
+ 
+def generate_password(length: int = 12, special_chars: str ='#-!£%^&_:'):
+    """Generate a secure random password."""
+    alphabet = string.ascii_letters + string.digits + special_chars
+    password = ''.join(secrets.choice(alphabet) for i in range(length))
+    return password
+       
 
 def hash_password(password):
     """Hash a password for storing."""
@@ -354,6 +396,21 @@ def setup_new_user(db: SQLManager, username, password)-> bool:
     return db.register_user(data)
 
 
+
+def gen_pass_prompt():
+    session = PromptSession()
+    bindings = KeyBindings()
+
+    @bindings.add('f2')
+    def _(event):
+        """Handler for F2 key press to generate password."""
+        pwd = generate_password()
+        event.app.current_buffer.insert_text(pwd)
+
+    return session.prompt("    Enter to skip password generate or Press F2 to generate password: ", key_bindings=bindings)
+
+
+
 def pass_prompt(console: Console, dek)-> PassTable|bool:
     '''
     Add Password data using the TUI prompt
@@ -363,16 +420,22 @@ def pass_prompt(console: Console, dek)-> PassTable|bool:
 
     console.print('    Username', style='green', end='')
     username: bytes = encrypt_data(dek, Prompt.ask(''))
+
+
+
+    password_str =  gen_pass_prompt()
+
+    if password_str == '':    
+        console.print('    Password', style='green', end='')
+        password_str: str = Prompt.ask('', password=True)
     
-    console.print('    Password', style='green', end='')
-    password_str: str = Prompt.ask('', password=True)
+        console.print('    Confirm Password', style='green', end='')
+        confirm_password: str = Prompt.ask('', password=True)
     
-    console.print('    Confirm Password', style='green', end='')
-    confirm_password: str = Prompt.ask('', password=True)
-    
-    if password_str != confirm_password:
-        print('Passwords do not match, try again')
-        return False
+        if password_str != confirm_password:
+            print('Passwords do not match, try again')
+            return False
+
     password: bytes = encrypt_data(dek, password_str)
     
     console.print('    Category', style='green', end='')
@@ -394,13 +457,18 @@ def clear_terminal():
     sys.stdout.write('\033[H\033[0J')
     sys.stdout.flush()
 
+from rich.console import Console
+from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
+import string
+
 
 def pp_prompt(console: Console, prompt_text: str, style: str = '#00CB05', password: bool = False):
     console.print(f'    {prompt_text}: ', style=style, end="")
     if password:
         return getpass.getpass(prompt='')
     else:
-        return input()
+        return Prompt.ask('')
     
 def auth_register(console: Console, auth: bool = False):
     prompt: str = (
@@ -436,7 +504,7 @@ def auth_register(console: Console, auth: bool = False):
                     auth = True
                     console.print(Panel(f'User {username} Authenticated Successfully'), justify="center", style='yellow')
         
-            case '3':
+            case '3' | 'q':
                 console.print('    Exiting...\n', style='green')
                 exit(0)
             case _:
@@ -449,6 +517,20 @@ def get_filtered_items(df: pd.DataFrame, keyword)-> pd.DataFrame:
     mask = df.map(lambda x: keyword in str(x).lower())
     # Use 'any' to filter rows where any column matches the keyword
     return df[mask.any(axis=1)]
+
+
+
+def rich_table(df: pd.DataFrame)-> tuple[Table, pd.DataFrame]:
+    table = Table(show_header=True, header_style="bold magenta", row_styles=['dim', ''], show_edge=False, highlight=True)
+        
+    for col in df.columns:
+        table.add_column(col)
+        
+    # Add rows to the table
+    for _, row in df.iterrows():
+        table.add_row(*[str(value) for value in row])
+    return table, df
+ 
 
 
 def print_paginated_table(console: Console, df: pd.DataFrame, page_size)-> int|str:
@@ -467,7 +549,8 @@ def print_paginated_table(console: Console, df: pd.DataFrame, page_size)-> int|s
         console.print(Panel(table, title='Password Table', border_style="bright_blue"), justify='center')
         
         start_row += page_size
-        response = pp_prompt(console, 'Press ENTER to continue, "q" to quit, "d" followed by Password id (or list of id) to delete password(s), or select Password ID', style='green')
+        console.print(f"    :e = edit followed by id\n    :d = delete follow by id or list of id's to delete\n    :q = quit\n    :id will copy password to clipboard", style='green')
+        response = pp_prompt(console, 'To Change page, Press ENTER to continue', style='green')
         if response:
             return response
 
@@ -480,6 +563,64 @@ def delete_data_entry(console: Console, response: str, db: SQLManager):
         console.print('    Data Entry Deletion Error', style='error')
     db.delete_data_entry(response_list)
         
+
+def edit_data_entry(console, response, db):
+    response_list = response.split(' ')
+    if 'e' in response_list:
+        response_list.remove('e')
+    else:
+        console.print('    Data Entry Deletion Error', style='error')
+    table, df = db.data_entry_by_id(response_list, console)
+
+    console.print(Panel(table, title='Password Entry', border_style="bright_blue"), justify='center')
+
+    word_dict: dict = {
+            df['name'].values[0]: 'name',
+            df['username'].values[0]: 'username',
+            df['category'].values[0]: 'category',
+            df['notes'].values[0]: 'notes'
+            }
+
+    fuzzy_completer = FuzzyWordCompleter(sorted([i for i in word_dict.keys()]), meta_dict=word_dict, WORD=True)
+
+    console.print('    Website/Name: ', style='green')
+    name: bytes = encrypt_data(db.dek, fuzzy_prompt('    ', completer=fuzzy_completer))
+
+    console.print('    Username:', style='green')
+    username: bytes = encrypt_data(db.dek, fuzzy_prompt('    ', completer=fuzzy_completer))
+
+    password_str =  gen_pass_prompt()
+
+    if password_str == '':    
+        console.print('    Password', style='green')
+        password_str: str = Prompt.ask('    ', password=True)
+    
+        console.print('    Confirm Password', style='green')
+        confirm_password: str = Prompt.ask('    ', password=True)
+    
+        if password_str != confirm_password:
+            print('Passwords do not match, try again')
+            return False    
+    
+    password: bytes = encrypt_data(db.dek, password_str)
+    
+    console.print('    Category', style='green')
+    category: bytes = encrypt_data(db.dek, fuzzy_prompt('    ', completer=fuzzy_completer))
+    
+    console.print('    Notes', style='green')
+    notes: bytes = encrypt_data(db.dek, fuzzy_prompt('    ', completer=fuzzy_completer))
+
+    data = PassTable(
+        name=name,
+        username=username,
+        password=password,
+        category=category,
+        notes=notes
+    )
+    db.update_password_for_user(data, df['id'].values[0])
+
+   
+
 
 
 def search_db(console:Console, db:SQLManager):
@@ -510,6 +651,10 @@ def search_db(console:Console, db:SQLManager):
         console.print(f'    d selected, deleting {response}...', style='alert')
         delete_data_entry(console, response, db)
         return
+    if isinstance(response, str) and response.startswith('e'):
+        console.print(f'    e selected, editing {response}...', style='alert')
+        edit_data_entry(console, response, db)
+        return
     if response:
         password = db.get_pass_by_id(response)
         if password:
@@ -531,7 +676,7 @@ def parse_file_columns(console: Console, df: pd.DataFrame):
                 df = df.rename(columns={col: key})
                 col_found = True
         if col_found is False:
-            console.print(f'    Column not identified in CSV/JSON/YAML File: {col}', style='red')
+            console.print(f'    Column not identified in CSV/JSON File: {col}', style='red')
             time.sleep(2)
         else:
             col_found = False
@@ -594,6 +739,10 @@ def get_data(console: Console, db: SQLManager):
                 if isinstance(response, str) and response.startswith('d'):
                     delete_data_entry(console, response, db)
                     continue
+                if isinstance(response, str) and response.startswith('e'):
+                    console.print(f'    e selected, editing {response}...', style='alert')
+                    edit_data_entry(console, response, db)
+                    continue
                 if response:
                     password = db.get_pass_by_id(response)
                     if password:
@@ -605,7 +754,7 @@ def get_data(console: Console, db: SQLManager):
                     if df is not None:
                         df = parse_file_columns(console, df)
                         db.file_to_sql(df)
-            case '5':
+            case '5' | 'q':
                 console.print('    Exiting...\n', style='green')
                 inapp = False
             case _:
