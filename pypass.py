@@ -187,6 +187,8 @@ class SQLManager:
     
     def file_to_sql(self, df: pd.DataFrame):
         df['user_id'] = self.user_table.user_id
+        df = df.sort_values(by='name')
+        df.reset_index(drop=True)
         cols = ['name', 'username', 'password', 'category', 'notes']
         for col in cols:
             # Ensure that the data is in bytes, then decrypt
