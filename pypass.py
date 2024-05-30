@@ -157,7 +157,7 @@ class SQLManager:
                     # Pass parameters as a dictionary
                     conn.execute(update_query, {'session_expires': session_expires, 'user_id': self.user_table.user_id})
                 return True
-            print('authentication failed')
+            print('    Authentication failed')
             return False
         except Exception as e:
             print(f'Auth failed {e}')
@@ -521,10 +521,10 @@ def get_filtered_items(df: pd.DataFrame, keyword)-> pd.DataFrame:
 
 
 def rich_table(df: pd.DataFrame)-> tuple[Table, pd.DataFrame]:
-    table = Table(show_header=True, header_style="bold magenta", row_styles=['dim', ''], show_edge=False, highlight=True)
+    table = Table(show_header=True, header_style="bold magenta", row_styles=['dim', ''], show_edge=False, highlight=True, padding=(0,1,1,1))
         
     for col in df.columns:
-        table.add_column(col)
+        table.add_column(col.capitalize())
         
     # Add rows to the table
     for _, row in df.iterrows():
@@ -537,10 +537,10 @@ def print_paginated_table(console: Console, df: pd.DataFrame, page_size)-> int|s
     start_row = 0
 
     while start_row < df.shape[0]:
-        table = Table(show_header=True, header_style="bold magenta", row_styles=['dim', ''], show_edge=False, highlight=True)
+        table = Table(show_header=True, header_style="bold magenta", row_styles=['dim', ''], show_edge=False, highlight=True, padding=(0,1,1,1))
         
         for col in df.columns:
-            table.add_column(col)
+            table.add_column(col.capitalize())
         
         # Add rows to the table
         for _, row in df.iloc[start_row:start_row + page_size].iterrows():
@@ -664,8 +664,8 @@ def search_db(console:Console, db:SQLManager):
 def parse_file_columns(console: Console, df: pd.DataFrame):
     col_map: dict = {
             'name': ['name', 'website', 'domain', 'url', 'site', 'service'],
-            'username': ['username', 'user id', 'account id', 'account', 'login'],
-            'password': ['password', 'pass', 'passcode', 'secret', 'pin', 'key'],
+            'username': ['login_username', 'username', 'user id', 'account id', 'account', 'login'],
+            'password': ['login_password', 'password', 'pass', 'passcode', 'secret', 'pin', 'key'],
             'category': ['category', 'type', 'class', 'group', 'tag'],
             'notes': ['notes', 'details', 'info', 'information', 'description']}
 
@@ -676,8 +676,9 @@ def parse_file_columns(console: Console, df: pd.DataFrame):
                 df = df.rename(columns={col: key})
                 col_found = True
         if col_found is False:
-            console.print(f'    Column not identified in CSV/JSON File: {col}', style='red')
-            time.sleep(2)
+            df = df.drop(columns=col)
+            console.print(f'    Column in CSV/JSON File: {col} not available in Database. Ignoring Entry....', style='red')
+            time.sleep(1)
         else:
             col_found = False
     return df
