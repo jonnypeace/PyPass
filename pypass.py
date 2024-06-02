@@ -188,7 +188,7 @@ class SQLManager:
     
     def file_to_sql(self, df: pd.DataFrame):
         df['user_id'] = self.user_table.user_id
-        df = df.sort_values(by='name')
+        df = df.sort_values(by='name', key=lambda x: x.str.lower())
         df.reset_index(drop=True)
         cols = ['name', 'username', 'password', 'category', 'notes']
         for col in cols:
@@ -202,25 +202,39 @@ class SQLManager:
         df = pd.read_sql_query(query, con=self.engine, params=(self.user_table.user_id,))
         return df
 
-    def load_table(self, console):
-        """Load and display passwords related to a specific user from the SQLite database."""
+    def decrypt_table(self, cols: list = ['name', 'username', 'category', 'notes']):
         df = self.get_df()
         decrypted_df = df
-        cols = ['name', 'username', 'category', 'notes']
         for col in cols:
             # Ensure that the data is in bytes, then decrypt
             decrypted_df[col] = df[col].apply(lambda x: decrypt_data(self.dek, x) if isinstance(x, bytes) else x)
+        return decrypted_df
+
+    def load_table(self, console):
+        """Load and display passwords related to a specific user from the SQLite database."""
+        decrypted_df = self.decrypt_table()
         return print_paginated_table(console, decrypted_df, 10)
 
-    def get_pass(self, name):
+    def name_user_list(self):
+        name_user_list = ['name', 'username']
+        df: pd.DataFrame = self.decrypt_table(name_user_list).sort_values(by='name', key=lambda x: x.str.lower())
+        str_builder = ''
+        for _, data in df.iterrows():
+            line = data[name_user_list].values
+            str_builder += f'{line}\n'
+        return str_builder
+
+
+    def get_pass(self, name, username):
         query = """
         SELECT password
         FROM passwords
         WHERE name = ?
+        AND username = ?
         AND user_id = ?
         """
         try:
-            result = pd.read_sql_query(query, con=self.engine, params=(name, self.user_table.user_id,))
+            result = pd.read_sql_query(query, con=self.engine, params=(name, username, self.user_table.user_id,))
             if not result.empty:
                 password = result.values[0][0]
                 return decrypt_data(self.dek, password)
@@ -712,6 +726,18 @@ def file_reader_to_df(console: Console, file: str|pathlib.Path)-> pd.DataFrame|N
     else:
         return reader(file)
 
+def load_table_parser(db, console):
+    response = db.load_table(console)
+    if isinstance(response, str) and response.startswith('d'):
+        delete_data_entry(console, response, db)
+    if isinstance(response, str) and response.startswith('e'):
+        console.print(f'    e selected, editing {response}...', style='alert')
+        edit_data_entry(console, response, db)
+    if response:
+        password = db.get_pass_by_id(response)
+        if password:
+            return password
+
 
 def get_data(console: Console, db: SQLManager):
     inapp: bool = True
@@ -761,6 +787,7 @@ def get_data(console: Console, db: SQLManager):
             case '5' | 'q':
                 console.print('    Exiting...\n', style='green')
                 inapp = False
+                clear_terminal_and_scroll_data()
             case _:
                 console.print(f'    Unrecognised Option: {action}\n', style='red')
                 continue
@@ -790,14 +817,13 @@ def main():
         if db:
             get_data(console, db)
     else:
-         # Display a panel with some instructions or information
+        # Display a panel with some instructions or information
         console.print(Panel("Welcome to PyPass! Please follow the instructions below.",
                             title="Welcome", border_style="bright_blue"), style='aqua',
                             justify="center")
-    
+        
         db: SQLManager = auth_register(console, False)
         get_data(console, db)
-
 
 
 def pypass_args():
@@ -816,6 +842,7 @@ def pypass_args():
     parser.add_argument('--password', '-p', nargs='*', help="For automation, password can be supplied in the terminal")
     parser.add_argument('--config', '-c', nargs='*', help="For automation, yaml or json can be supplied with user credentials")
     parser.add_argument('--interactive', '-i', action='store_true', help="For automation, yaml or json can be supplied with user credentials")
+    parser.add_argument('--ls', '-l', action='store_true', help="List of website/names and usernames")
 
     # Parse the arguments
     args = parser.parse_args()
@@ -846,6 +873,7 @@ def keygen_parser(keygen: list):
 def args_actions(console):
     args = pypass_args()
     db = SQLManager()
+
     if args.config:
         with open(pathlib.Path(args.config[0])) as file:
             data = [line.strip() for line in file.readlines()]
@@ -864,7 +892,9 @@ def args_actions(console):
     if args.interactive:
         return db
     if args.table:
-        db.load_table(console)
+        password = load_table_parser(db, console)
+        pyclip.copy(password)
+        clear_terminal_and_scroll_data()
     if '-k' in sys.argv or '--keygen' in sys.argv:
         if args.keygen:
             password = keygen_parser(args.keygen)
@@ -873,10 +903,9 @@ def args_actions(console):
         print(password, ' Copied to clipboard. Clipboard will not be cleared automatically in non-interactive mode')
         pyclip.copy(password)
         time.sleep(2)
+    if args.ls:
+        print(db.name_user_list())
  
 if __name__ == '__main__':
-    try:
-        main()
-    finally:
-        clear_terminal_and_scroll_data()
+    main()
 
