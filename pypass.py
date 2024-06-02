@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from numpy.core.fromnumeric import argsort
 import pandas as pd
 from pandas.core.api import DataFrame
 from sqlalchemy import create_engine, text
@@ -783,16 +784,95 @@ def main():
     })
     clear_terminal()
     console = Console(theme=pypass_theme)
+
+    if len(sys.argv) > 1:
+        db = args_actions(console)
+        if db:
+            get_data(console, db)
+    else:
+         # Display a panel with some instructions or information
+        console.print(Panel("Welcome to PyPass! Please follow the instructions below.",
+                            title="Welcome", border_style="bright_blue"), style='aqua',
+                            justify="center")
     
-    # Display a panel with some instructions or information
-    console.print(Panel("Welcome to PyPass! Please follow the instructions below.",
-                        title="Welcome", border_style="bright_blue"), style='aqua',
-                        justify="center")
-
-    db: SQLManager = auth_register(console, False)
-    get_data(console, db)
+        db: SQLManager = auth_register(console, False)
+        get_data(console, db)
 
 
+
+def pypass_args():
+    # Create the argument parser object
+    parser = argparse.ArgumentParser(description="Simple Commandline Password Manager using Pandas and SQLite")
+    
+    # Define the command line arguments
+    parser.add_argument('--add', '-a', nargs='*', help="Add new password entry. Example usage: app.py -a website username password")
+    parser.add_argument('--edit', '-e', nargs='*', help="Edit password entry based on username")
+    parser.add_argument('--delete', '-d', nargs='*', help="Delete password entry from database")
+    parser.add_argument('--table', '-t', action='store_true', help="View Table of password entries, passwords not visible")
+    parser.add_argument('--get', '-g', nargs='*', help="Get and decrypt password")
+    parser.add_argument('--keygen', '-k', nargs='*', help="Generate keys to encrypt password entries")
+    parser.add_argument('--register', '-r', action='store_true', help="Register User Database")
+    parser.add_argument('--username', '-u', nargs='*', help="For automation, username can be supplied in the terminal")
+    parser.add_argument('--password', '-p', nargs='*', help="For automation, password can be supplied in the terminal")
+    parser.add_argument('--config', '-c', nargs='*', help="For automation, yaml or json can be supplied with user credentials")
+    parser.add_argument('--interactive', '-i', action='store_true', help="For automation, yaml or json can be supplied with user credentials")
+
+    # Parse the arguments
+    args = parser.parse_args()
+
+    # Returning the parsed arguments object
+    return args
+
+
+def keygen_parser(keygen: list):
+    num_args = len(keygen)
+    args_dict: dict = {}
+
+    try:
+        args_dict['length'] = int(keygen[0])
+    except ValueError:
+        args_dict['special_chars'] = keygen[0]
+    
+    if num_args == 2:
+        try:
+            args_dict['length'] = int(keygen[1])
+        except ValueError:
+            args_dict['special_chars'] = keygen[1]
+    
+    password = generate_password(**args_dict)
+
+    return password
+
+def args_actions(console):
+    args = pypass_args()
+    db = SQLManager()
+    if args.config:
+        with open(pathlib.Path(args.config[0])) as file:
+            data = [line.strip() for line in file.readlines()]
+            username = data[0]
+            password = data[1]
+        # Assuming 'args.config' is a list, check if it's not empty
+    elif args.username and args.password:
+        username = args.username[0]
+        password = args.password[0]
+    else:
+        print("No authentication can take place without a config file or username & password flag")
+        exit(0)
+    if db.authenticate_user(username,password) is False:
+        time.sleep(2)
+        exit(0)
+    if args.interactive:
+        return db
+    if args.table:
+        db.load_table(console)
+    if '-k' in sys.argv or '--keygen' in sys.argv:
+        if args.keygen:
+            password = keygen_parser(args.keygen)
+        else:
+            password = generate_password() # default of 12
+        print(password, ' Copied to clipboard. Clipboard will not be cleared automatically in non-interactive mode')
+        pyclip.copy(password)
+        time.sleep(2)
  
 if __name__ == '__main__':
     try:
@@ -800,44 +880,3 @@ if __name__ == '__main__':
     finally:
         clear_terminal_and_scroll_data()
 
-    # parser = argparse.ArgumentParser(description="Simple Commandline Password Manager using Pandas and SQLite")
-    # parser.add_argument('--add', '-a', nargs='*', help="Add new password entry. app.py -a website_username")
-    # parser.add_argument('--edit', '-e', nargs='*', help="Edit password entry based on username")
-    # parser.add_argument('--delete', '-d', nargs='*', help="Delete password entry for database")
-    # parser.add_argument('--table', '-t', action='store_true', help="View Table of password entries, passwords not visible")
-    # parser.add_argument('--get', '-g', nargs='*', help="Get and decrypt password")
-    # parser.add_argument('--keygen', '-k', action='store_true', help="Generate keys to encrypt password entries")
-    # parser.add_argument('--register', '-r', action='store_true', help="Register User Database")
-    # parser.add_argument('--verbose', '-v', action='store_true', help="Verbose output")
-    # parser.add_argument('--username', '-u', nargs='*', help="For automation, username can be supplied in terminal")
-    # parser.add_argument('--password', '-p', nargs='*', help="For automation, password can be supplied in the terminal")
-    # parser.add_argument('--config-file', '-c', nargs='*', help="For automation, yaml or json can be supplied with user credentials")
-    
-    
-    # args = parser.parse_args()
-    
-    # if args.keygen:
-    #     generate_keys()
-
-    # if args.add:
-    #     add_password_for_user(args.add[0])
-    
-    # if args.delete:
-    #     pass
-
-    # if args.table:
-    #     if args.verbose:
-    #         verbose = True
-    #     else:
-    #         verbose = False
-    #     load_data(verbose)
-
-    # if args.get:
-    #     print(get_pass(args.get[0]))
-
-    # if args.register:
-    #     if not pathlib.Path('py_pass.db').exists():
-    #         setup_user_table()
-    #     username = input('Please Enter Username: ')
-    #     password = getpass.getpass('Your password: ')
-    #     register_user(username=username, password=password)

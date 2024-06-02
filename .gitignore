@@ -4,3 +4,4 @@ prompt.py
 *.db
 testing*
 texing*
+pypass.conf
