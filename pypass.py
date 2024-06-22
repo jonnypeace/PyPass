@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
-from numpy.core.fromnumeric import argsort
 import pandas as pd
-from pandas.core.api import DataFrame
 from sqlalchemy import create_engine, text
 import hashlib, binascii, os, pathlib, datetime, argparse, base64, getpass, sys, pyclip, threading, time, secrets, string
 from threading import Timer
@@ -10,21 +8,15 @@ from queue import Queue
 from dataclasses import dataclass, field, asdict
 from functools import wraps
 from typing import Optional
-from rich import print, inspect
 from rich.console import Console
 from rich.prompt import Prompt
 from rich.table import Table
-from rich.pretty import pprint
-from rich.layout import Layout
 from rich.panel import Panel
 from rich.live import Live
 from rich.theme import Theme
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import serialization
 from cryptography.fernet import Fernet
 from prompt_toolkit.completion import FuzzyWordCompleter
 from prompt_toolkit import prompt as fuzzy_prompt
@@ -221,23 +213,17 @@ class SQLManager:
         str_builder = ''
         for _, data in df.iterrows():
             line = data[name_user_list].values
-            str_builder += f'{line}\n'
+            str_builder += f'{line[0]},{line[1]}\n'
         return str_builder
 
 
     def get_pass(self, name, username):
-        query = """
-        SELECT password
-        FROM passwords
-        WHERE name = ?
-        AND username = ?
-        AND user_id = ?
-        """
         try:
-            result = pd.read_sql_query(query, con=self.engine, params=(name, username, self.user_table.user_id,))
-            if not result.empty:
-                password = result.values[0][0]
-                return decrypt_data(self.dek, password)
+            name_user_list = ['name', 'username', 'password']
+            df: pd.DataFrame = self.decrypt_table(name_user_list).sort_values(by='name', key=lambda x: x.str.lower())
+            result = df.query("name == @name and username == @username")['password'].values[0]
+            if result:
+                return result
             else:
                 return None  # Or raise an exception, or handle the "not found" case as appropriate
         except Exception as e:
@@ -737,6 +723,8 @@ def load_table_parser(db, console):
         password = db.get_pass_by_id(response)
         if password:
             return password
+    else:
+        return None
 
 
 def get_data(console: Console, db: SQLManager):
@@ -831,17 +819,17 @@ def pypass_args():
     parser = argparse.ArgumentParser(description="Simple Commandline Password Manager using Pandas and SQLite")
     
     # Define the command line arguments
-    parser.add_argument('--add', '-a', nargs='*', help="Add new password entry. Example usage: app.py -a website username password")
-    parser.add_argument('--edit', '-e', nargs='*', help="Edit password entry based on username")
-    parser.add_argument('--delete', '-d', nargs='*', help="Delete password entry from database")
+    parser.add_argument('--add', '-a', nargs='*', help="Add new password entry. Example usage: app.py -a website username password") # Not supported
+    parser.add_argument('--edit', '-e', nargs='*', help="Edit password entry based on username") # Not supported
+    parser.add_argument('--delete', '-d', nargs='*', help="Delete password entry from database") # Not supported
     parser.add_argument('--table', '-t', action='store_true', help="View Table of password entries, passwords not visible")
-    parser.add_argument('--get', '-g', nargs='*', help="Get and decrypt password")
-    parser.add_argument('--keygen', '-k', nargs='*', help="Generate keys to encrypt password entries")
-    parser.add_argument('--register', '-r', action='store_true', help="Register User Database")
+    parser.add_argument('--get', '-g', nargs='*', help="Get and decrypt password, comma separated. i.e. 'Twitter,username'. Note: No space after the comma")
+    parser.add_argument('--keygen', '-k', nargs='*', help="Generate keys. Default is 12 chars '#-!£%%^&_:'. Args should look like this --keygen 15 '!£$%%$^', which represents password length and special chars")
+    parser.add_argument('--register', '-r', action='store_true', help="Register User Database") # Not supported
     parser.add_argument('--username', '-u', nargs='*', help="For automation, username can be supplied in the terminal")
     parser.add_argument('--password', '-p', nargs='*', help="For automation, password can be supplied in the terminal")
-    parser.add_argument('--config', '-c', nargs='*', help="For automation, yaml or json can be supplied with user credentials")
-    parser.add_argument('--interactive', '-i', action='store_true', help="For automation, yaml or json can be supplied with user credentials")
+    parser.add_argument('--config', '-c', nargs='*', help="For automation, text file can be supplied with user credentials")
+    parser.add_argument('--interactive', '-i', action='store_true', help="You can supply config file to log in automatically and get to the dashboard")
     parser.add_argument('--ls', '-l', action='store_true', help="List of website/names and usernames")
 
     # Parse the arguments
@@ -852,19 +840,24 @@ def pypass_args():
 
 
 def keygen_parser(keygen: list):
-    num_args = len(keygen)
     args_dict: dict = {}
-
-    try:
-        args_dict['length'] = int(keygen[0])
-    except ValueError:
-        args_dict['special_chars'] = keygen[0]
+    found_length = False
     
-    if num_args == 2:
+    for arg in keygen:
         try:
-            args_dict['length'] = int(keygen[1])
+            # Attempt to convert each argument to an integer
+            value = int(arg)
+            args_dict['length'] = value
+            found_length = True
         except ValueError:
-            args_dict['special_chars'] = keygen[1]
+            # If it's not an integer, treat it as special characters
+            # This ensures we don't overwrite the entry if already set
+            if 'special_chars' not in args_dict:
+                args_dict['special_chars'] = arg
+    
+    # If no valid length was found, set a default or raise an error
+    if not found_length:
+        raise ValueError(f"Unable to parse args passed to kegen. Args should be something like this 15 '!£$%$^', which represents password length and special chars")
     
     password = generate_password(**args_dict)
 
@@ -885,15 +878,14 @@ def args_actions(console):
         password = args.password[0]
     else:
         print("No authentication can take place without a config file or username & password flag")
-        exit(0)
     if db.authenticate_user(username,password) is False:
-        time.sleep(2)
         exit(0)
     if args.interactive:
         return db
     if args.table:
         password = load_table_parser(db, console)
-        pyclip.copy(password)
+        if password:
+            pyclip.copy(password)
         clear_terminal_and_scroll_data()
     if '-k' in sys.argv or '--keygen' in sys.argv:
         if args.keygen:
@@ -902,9 +894,14 @@ def args_actions(console):
             password = generate_password() # default of 12
         print(password, ' Copied to clipboard. Clipboard will not be cleared automatically in non-interactive mode')
         pyclip.copy(password)
-        time.sleep(2)
     if args.ls:
         print(db.name_user_list())
+    if args.get:
+        data = args.get[0].split(',')
+        password = db.get_pass(*data)
+        pyclip.copy(password)
+        print(password)
+
  
 if __name__ == '__main__':
     main()
