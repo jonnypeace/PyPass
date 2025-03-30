@@ -164,7 +164,7 @@ class SQLManager:
         rows, description = self.get_query(query, params)
         # Assume we know the column names and types, adjust as necessary
         columns = [description[0] for description in description]
-        df = pl.DataFrame(rows, schema=columns)
+        df = pl.DataFrame(rows, orient='row', schema=columns)
         return df
     
     def authenticate_user(self, username, password):
