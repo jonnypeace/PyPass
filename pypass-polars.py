@@ -256,6 +256,7 @@ class SQLManager:
         
     def decrypt_table(self, cols: list = ['name', 'username', 'category', 'notes']):
         df: pl.DataFrame = self.get_df()
+
         for col in cols:
             df = df.with_columns(
                     df[col].map_elements(
@@ -715,7 +716,7 @@ def edit_data_entry(console: Console, response: str, db: SQLManager):
 def search_db(console:Console, db:SQLManager):
     df: pl.DataFrame = db.get_df()
     decrypted_df: pl.DataFrame = df.clone()
-    cols = ['name', 'username', 'category']
+    cols = ['name', 'username', 'category', 'notes']
     words_set: set = set()
 
     # Apply decryption and create a new DataFrame
