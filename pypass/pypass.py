@@ -922,12 +922,12 @@ def pypass_args():
     
     # Define the command line arguments
     parser.add_argument('--add', '-a', nargs='*', help="Add new password entry. Example usage: app.py -a website username password") # Not supported
-    parser.add_argument('--edit', '-e', nargs='*', help="Edit password entry based on username") # Not supported
-    parser.add_argument('--delete', '-d', nargs='*', help="Delete password entry from database") # Not supported
+    # parser.add_argument('--edit', '-e', nargs='*', help="Edit password entry based on username") # Not supported
+    # parser.add_argument('--delete', '-d', nargs='*', help="Delete password entry from database") # Not supported
     parser.add_argument('--table', '-t', action='store_true', help="View Table of password entries, passwords not visible")
     parser.add_argument('--get', '-g', nargs='*', help="Get and decrypt password, comma separated. i.e. 'Twitter,username'. Note: No space after the comma")
     parser.add_argument('--keygen', '-k', nargs='*', help="Generate keys. Default is 12 chars '#-!£%%^&_:'. Args should look like this --keygen 15 '!£$%%$^', which represents password length and special chars")
-    parser.add_argument('--register', '-r', action='store_true', help="Register User Database") # Not supported
+    # parser.add_argument('--register', '-r', action='store_true', help="Register User Database") # Not supported
     parser.add_argument('--username', '-u', nargs='*', help="For automation, username can be supplied in the terminal")
     parser.add_argument('--password', '-p', nargs='*', help="For automation, password can be supplied in the terminal")
     parser.add_argument('--config', '-c', nargs='*', help="For automation, text file can be supplied with user credentials")
