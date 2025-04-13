@@ -899,6 +899,18 @@ def get_data(console: Console, db: SQLManager):
 def clear_terminal_and_scroll_data():
     command = 'clear' if os.name == 'posix' else 'cls'
     os.system(command)
+    exit(0)
+
+
+def interactive_mode(console: Console):
+    # Display a panel with some instructions or information
+    console.print(Panel("Welcome to PyPass! Please follow the instructions below.",
+                        title="Welcome", border_style="bright_blue"), style='aqua',
+                        justify="center")
+            
+    db: SQLManager = auth_register(console, False)
+    get_data(console, db)
+    return db
 
 
 def main():
@@ -920,13 +932,7 @@ def main():
             if db:
                 get_data(console, db)
         else:
-            # Display a panel with some instructions or information
-            console.print(Panel("Welcome to PyPass! Please follow the instructions below.",
-                                title="Welcome", border_style="bright_blue"), style='aqua',
-                                justify="center")
-            
-            db: SQLManager = auth_register(console, False)
-            get_data(console, db)
+            db = interactive_mode(console)
     finally:
         try:
             db.conn.close()
@@ -988,6 +994,14 @@ def args_actions(console):
     args = pypass_args()
     db = SQLManager()
 
+    if '-k' in sys.argv or '--keygen' in sys.argv:
+        if args.keygen:
+            password = keygen_parser(args.keygen)
+        else:
+            password = generate_password() # default of 12
+        print(password, ' Copied to clipboard. Clipboard will not be cleared automatically in non-interactive mode')
+        pyclip.copy(password)
+
     if args.config:
         with open(pathlib.Path(args.config[0])) as file:
             data = [line.strip() for line in file.readlines()]
@@ -998,7 +1012,9 @@ def args_actions(console):
         username = args.username[0]
         password = args.password[0]
     else:
-        print("No authentication can take place without a config file or username & password flag")
+        print("No authentication can take place without a config file or username & password flag, entering interactive mode")
+        db = interactive_mode(console)
+        return db
     if db.authenticate_user(username,password) is False:
         exit(0)
     if args.interactive:
@@ -1008,13 +1024,6 @@ def args_actions(console):
         if password:
             pyclip.copy(password)
         clear_terminal_and_scroll_data()
-    if '-k' in sys.argv or '--keygen' in sys.argv:
-        if args.keygen:
-            password = keygen_parser(args.keygen)
-        else:
-            password = generate_password() # default of 12
-        print(password, ' Copied to clipboard. Clipboard will not be cleared automatically in non-interactive mode')
-        pyclip.copy(password)
     if args.ls:
         print(db.name_user_list())
     if args.get:
