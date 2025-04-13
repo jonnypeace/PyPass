@@ -6,6 +6,9 @@ on:
       - 'v*'       # e.g. v0.1.0
       - 'latest'   # latest tag
 
+permissions:
+  contents: write  # 👈 REQUIRED for release creation
+
 jobs:
   build:
     name: Build on ${{ matrix.os }}
