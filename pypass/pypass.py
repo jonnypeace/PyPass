@@ -24,7 +24,7 @@ from prompt_toolkit.completion import FuzzyWordCompleter
 from prompt_toolkit import prompt as fuzzy_prompt
 from copy import copy
 from .navigation import file_system_nav
-
+from pathlib import Path
 
 #################### Clipboard #########################
 
@@ -84,9 +84,27 @@ class PassTable:
     def add_user_id(self, user_id: int):
         self.user_id = int(user_id)
 
+
+
+def get_default_db_path():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--db', help='Path to the password database')
+    args, unknown = parser.parse_known_args()
+
+    if args.db:
+        # Resolve to absolute path relative to current working directory
+        return str(Path(args.db).resolve())
+    
+    # Fallback: user home dir
+    home = Path.home()
+    fallback = home / ".pypass" / "py_pass.db"
+    fallback.parent.mkdir(parents=True, exist_ok=True)
+    return str(fallback)
+
 class SQLManager:
-    def __init__(self, db_url='py_pass_polars.db'):
-        self.conn = sqlite3.connect(db_url)
+    def __init__(self):
+        db_path = get_default_db_path()
+        self.conn = sqlite3.connect(db_path)
         self.user_table: UserTable = None
         self.dek = None
         self.setup_user_table()
@@ -933,6 +951,7 @@ def pypass_args():
     parser.add_argument('--config', '-c', nargs='*', help="For automation, text file can be supplied with user credentials")
     parser.add_argument('--interactive', '-i', action='store_true', help="You can supply config file to log in automatically and get to the dashboard")
     parser.add_argument('--ls', '-l', action='store_true', help="List of website/names and usernames")
+    parser.add_argument('--db', nargs=1, help="Path to database file")
 
     # Parse the arguments
     args = parser.parse_args()
