@@ -8,15 +8,9 @@
 - 🧭 **Interactive CLI**: Navigate your password vault with an intuitive interface.
 - 🔍 **Search**: Quickly find entries using fuzzy search.
 - 📋 **Clipboard Integration**: Copy credentials securely via `pyclip`.
-- 🧪 **Cross-Platform**: Works on Linux, macOS, and Windows.
+- 🧪 **Cross-Platform**: Works on Linux and Windows.
 
 ## 🚀 Installation
-
-### From PyPI
-
-```bash
-pip install pypass
-```
 
 ### From Source
 
@@ -25,6 +19,18 @@ git clone https://github.com/jonnypeace/PyPass.git
 cd PyPass
 pip install .
 ```
+
+### From github versions
+
+Download the windows exe, or the python pyz.
+
+To run the pyz...
+
+```bash
+python pypass.pyz
+```
+
+The windows exe will run as it.
 
 ## 🛠 Usage
 
