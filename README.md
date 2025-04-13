@@ -34,13 +34,9 @@ The windows exe will run as it.
 
 ## 🛠 Usage
 
-After installation, simply run:
-
-```bash
-pypass
-```
-
 The CLI will guide you through navigating, searching, copying, and managing your stored credentials.
+
+Some commandline args exist to automate workflows, i.e. passing a config, with stored credentials, but not essential for interactive use.
 
 > The UI is fully interactive, using arrow keys, fuzzy search, and prompt-toolkit widgets.
 
