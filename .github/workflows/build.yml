@@ -1,0 +1,65 @@
+name: Build CLI for All Platforms
+
+on:
+  push:
+    tags:
+      - 'v*'       # e.g. v0.1.0
+      - 'latest'   # latest tag
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ['3.12', '3.13']
+
+      - name: Install dependencies using toml
+        run: pip install .
+
+      - name: Install packaging tools
+        run: pip install pyinstaller shiv build
+
+      - name: Build wheel
+        run: python -m build
+
+      - name: Build PyInstaller binary (Windows only)
+        if: matrix.os == 'windows-latest'
+        run: pyinstaller --onefile pypass/pypass.py --name pypass
+
+      - name: Build Shiv CLI (non-Windows)
+        if: matrix.os != 'windows-latest'
+        run: |
+          shiv -c pypass -o pypass.pyz dist/*.whl --compressed
+
+      - name: Upload PyInstaller EXE
+        if: matrix.os == 'windows-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ github.ref_name }} Release
+          tag_name: ${{ github.ref_name }}
+          files: dist/pypass.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Shiv .pyz
+        if: matrix.os != 'windows-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ github.ref_name }} Release
+          tag_name: ${{ github.ref_name }}
+          files: pypass.pyz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

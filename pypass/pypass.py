@@ -23,7 +23,7 @@ from cryptography.fernet import Fernet
 from prompt_toolkit.completion import FuzzyWordCompleter
 from prompt_toolkit import prompt as fuzzy_prompt
 from copy import copy
-from navigation import file_system_nav
+from .navigation import file_system_nav
 
 
 #################### Clipboard #########################

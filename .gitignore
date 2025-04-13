@@ -5,3 +5,6 @@ prompt.py
 testing*
 texing*
 pypass.conf
+dist/
+pypass.egg-info/
+

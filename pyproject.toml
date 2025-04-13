@@ -1,0 +1,26 @@
+[project]
+name = "pypass"
+version = "0.1.0"
+description = "A local password manager using rich, polars, and more"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Your Name", email = "you@example.com" }]
+dependencies = [
+    "rich",
+    "polars",
+    "cryptography",
+    "pyclip",
+    "prompt_toolkit"
+]
+requires-python = ">=3.11"
+
+[tool.setuptools]
+packages = ["pypass"]
+
+[project.scripts]
+pypass = "pypass.pypass:main"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
