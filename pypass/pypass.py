@@ -602,7 +602,7 @@ def auth_register(console: Console, auth: bool = False):
         
             case '3' | 'q':
                 console.print('    Exiting...\n', style='green')
-                exit(0)
+                sys.exit(0)
             case _:
                 console.print('    Unrecognised Option\n', style='red')
                 continue
@@ -899,7 +899,7 @@ def get_data(console: Console, db: SQLManager):
 def clear_terminal_and_scroll_data():
     command = 'clear' if os.name == 'posix' else 'cls'
     os.system(command)
-    exit(0)
+    sys.exit(0)
 
 
 def interactive_mode(console: Console):
@@ -1016,7 +1016,7 @@ def args_actions(console):
         db = interactive_mode(console)
         return db
     if db.authenticate_user(username,password) is False:
-        exit(0)
+        sys.exit(0)
     if args.interactive:
         return db
     if args.table:
