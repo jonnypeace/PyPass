@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import polars as pl, sqlite3
-import hashlib, binascii, os, pathlib, datetime, argparse, base64, getpass, sys, pyclip, threading, time, secrets, string
+import hashlib, binascii, os, pathlib, datetime, argparse, base64, getpass, sys, pyclip, threading, time, secrets, string, signal
 from threading import Timer
 from queue import Queue
 from dataclasses import dataclass, field, asdict
@@ -25,6 +25,13 @@ from prompt_toolkit import prompt as fuzzy_prompt
 from copy import copy
 from pypass.navigation import file_system_nav
 from pathlib import Path
+
+def _handle_sigint(signum, frame):
+    # optional: print a message, flush logs, etc.
+    sys.exit(0)
+
+# install handler before anything else runs
+signal.signal(signal.SIGINT, _handle_sigint)
 
 #################### Clipboard #########################
 
@@ -338,22 +345,33 @@ class SQLManager:
         WHERE id = ?
         AND user_id = ?
         """
+        
         # Execute the query using the first id provided and the user's id
         try:
             result: pl.DataFrame = self.get_df_query_params(query, (id, self.user_table.user_id))
-            if not result.is_empty():
                 # Decrypt data only for the specific byte columns if needed
-                decrypted_columns = []
-                for col in result.columns:
-                    if result[col].dtype == pl.Utf8:
-                        decrypted_columns.append(result[col].apply(lambda x: decrypt_data(self.dek, x) if isinstance(x, bytes) else x).alias(col))
+            if not result.is_empty():
+                decrypted_exprs = []
+                # zip together names and dtypes for clarity
+                for name, dtype in zip(result.columns, result.dtypes):
+                    if dtype == pl.Binary:
+                        # only map over the bytes you actually need to decrypt
+                        decrypted_exprs.append(
+                            pl.col(name)
+                            .map_elements(
+                                lambda x: decrypt_data(self.dek, x) if isinstance(x, (bytes, bytearray)) else x,
+                                return_dtype=pl.Utf8  # decrypted text is UTF‑8
+                            )
+                            .alias(name)
+                        )
                     else:
-                        decrypted_columns.append(result[col])
+                        # leave everything else exactly as it was
+                        decrypted_exprs.append(pl.col(name))
 
-                decrypted_data = result.with_columns(decrypted_columns)
+                decrypted_data = result.with_columns(decrypted_exprs)
 
                 # Create a Rich Table to display the data
-                return rich_table(decrypted_data, console)
+                return rich_table(decrypted_data)
             else:
                 print(f'    No result found with database query, id: {id}')
                 return None
@@ -676,12 +694,13 @@ def delete_data_entry(console: Console, response: str, db: SQLManager):
         
 
 def edit_data_entry(console: Console, response: str, db: SQLManager):
-    response_list = response.split(' ')
+    response_list = response.split()
     if 'e' in response_list:
         response_list.remove('e')
     else:
         console.print('    Data Entry Deletion Error', style='error')
-    table, df = db.data_entry_by_id(response_list, console)
+    id_int = int(response_list[0])
+    table, df = db.data_entry_by_id(id_int, console)
 
     console.print(Panel(table, title='Password Entry', border_style="bright_blue"), justify='center')
     df: pl.DataFrame
@@ -914,30 +933,35 @@ def interactive_mode(console: Console):
 
 
 def main():
-    pypass_theme = Theme({
-        "aqua": "#00A6A9", 
-        "purple": "#C500B7", 
-        "red": "#D10015",
-        "error": "#D10015",
-        "green": '#00CB05',
-        "success": '#00CB05',
-        'yellow': '#F2E900',
-        'alert': '#ff9933'
-    })
-    clear_terminal()
-    console = Console(theme=pypass_theme)
     try:
-        if len(sys.argv) > 1:
-            db = args_actions(console)
-            if db:
-                get_data(console, db)
-        else:
-            db = interactive_mode(console)
-    finally:
+        pypass_theme = Theme({
+            "aqua": "#00A6A9", 
+            "purple": "#C500B7", 
+            "red": "#D10015",
+            "error": "#D10015",
+            "green": '#00CB05',
+            "success": '#00CB05',
+            'yellow': '#F2E900',
+            'alert': '#ff9933'
+        })
+        clear_terminal()
+        console = Console(theme=pypass_theme)
         try:
-            db.conn.close()
-        except (UnboundLocalError, AttributeError):
-            pass # db not initialised, so no closing required
+            if len(sys.argv) > 1:
+                db = args_actions(console)
+                if db:
+                    get_data(console, db)
+            else:
+                db = interactive_mode(console)
+        finally:
+            try:
+                db.conn.close()
+            except (UnboundLocalError, AttributeError):
+                pass # db not initialised, so no closing required
+    except KeyboardInterrupt:
+        pass
+    finally:
+        return 0
 
 
 def pypass_args():
