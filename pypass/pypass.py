@@ -13,6 +13,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.live import Live
 from rich.theme import Theme
+from rich import print
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
 import string
@@ -223,18 +224,19 @@ class SQLManager:
         print("    Password added successfully.")
         return
 
-    def update_password_for_user(self, data: PassTable, id: int):
+    def update_password_for_user(self, data: PassTable, id: int, console: Console):
         query = '''
         UPDATE passwords 
         SET name = :name, username = :username, password = :password, category = :category, notes = :notes
         WHERE id = :id AND user_id = :user_id
         '''
-        data.add_user_id(self.user_table.user_id[0])
+
+        data.add_user_id(self.user_table.user_id)
         data.add_id(id)
         with self.conn as conn:
             conn.execute(query, asdict(data))
             conn.commit()
-            print("    Password updated successfully.")
+            console.print("    Password updated successfully.")
         return
 
     def sort_val(self,df: pl.DataFrame):
@@ -747,7 +749,7 @@ def edit_data_entry(console: Console, response: str, db: SQLManager):
         category=category,
         notes=notes
     )
-    db.update_password_for_user(data, df['id'])
+    db.update_password_for_user(data, df['id'][0], console)
 
 
 def search_db(console:Console, db:SQLManager):
