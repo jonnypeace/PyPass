@@ -42,7 +42,7 @@ Some commandline args exist to automate workflows, i.e. passing a config, with s
 
 ## 🧩 Configuration
 
-`pypass.conf` is created and used to store settings. The database (`py_pass.db`) is encrypted and kept locally.
+Using `-c` with a filename such as `pypass.conf` containing username and password, will log you in automatically. Remember to include the `-i` option for interactive if you still want to navigate. The database (`py_pass.db`) is encrypted and kept locally.
 
 ## 📦 Dependencies
 
