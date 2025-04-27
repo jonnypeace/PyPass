@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Show help
-if [[ "$1" =~ "-h" ]]; then
+if [[ "$1" =~ "-h" ]] || [[ "$1" == '--help' ]]; then
   echo "Usage: ./add-version.sh vX.Y.Z"
   echo "Example: ./add-version.sh v0.1.4"
   exit 0
