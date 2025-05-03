@@ -246,33 +246,29 @@ class SQLManager:
         df = df.drop('name_lower')
         return df
 
-    def file_to_sql(self, df: pl.DataFrame):
-        cursor = self.conn.cursor()
-
-        # Assume df is a Polars DataFrame that needs to be converted to a list of dictionaries for insertion
-        records = df.to_pandas().to_dict('records')  # Convert to Pandas DataFrame then to list of dicts
-
-        # Encrypt data in specified columns
-        cols = ['name', 'username', 'password', 'category', 'notes']
-        for record in records:
-            for col in cols:
-                record[col] = encrypt_data(self.dek, str(record[col]))
-
-        # SQL Insert Statement
-        columns = ', '.join(cols + ['user_id'])
-        placeholders = ', '.join(['?' for _ in cols] + ['?'])
-        sql = f"INSERT INTO passwords ({columns}) VALUES ({placeholders})"
-
-        try:
-            # Insert each record into the database
+    def file_to_sql(self, df: pl.DataFrame, console: Console):
+        with self.conn as conn:
+            # Assume df is a Polars DataFrame that needs to be converted to a list of dictionaries for insertion
+            records = df.to_dicts()
+            # Encrypt data in specified columns
+            cols = ['name', 'username', 'password', 'category', 'notes']
             for record in records:
-                values = [record[col] for col in cols] + [self.user_table.user_id]
-                cursor.execute(sql, values)
-            self.conn.commit()
-            print('    File Uploaded into Database Successfully')
-        except Exception as e:
-            print(f'    File upload failed: {e}')
-            self.conn.rollback()  # Roll back in case of error
+                for col in cols:
+                    record[col] = encrypt_data(self.dek, str(record[col]))
+            # SQL Insert Statement
+            columns = ', '.join(cols + ['user_id'])
+            placeholders = ', '.join(['?' for _ in cols] + ['?'])
+            sql = f"INSERT INTO passwords ({columns}) VALUES ({placeholders})"
+            try:
+                # Insert each record into the database
+                for record in records:
+                    values = [record[col] for col in cols] + [self.user_table.user_id]
+                    conn.execute(sql, values)
+                conn.commit()
+                console.print('    File Uploaded into Database Successfully', style='green')
+            except Exception as e:
+                console.print(f'    File upload failed: {e}', style='red')
+                conn.rollback()  # Roll back in case of error
 
 
     def get_df(self)-> pl.DataFrame:
@@ -903,11 +899,11 @@ def get_data(console: Console, db: SQLManager):
                         copy_to_clipboard(console, password, timeout=30)
             case '4':
                 filename = pathlib.Path(file_system_nav())
-                if filename.exists:
+                if filename.exists():
                     df = file_reader_to_df(console, filename)
                     if df is not None:
                         df = parse_file_columns(console, df)
-                        db.file_to_sql(df)
+                        db.file_to_sql(df, console)
             case '5' | 'q':
                 console.print('    Exiting...\n', style='green')
                 inapp = False
