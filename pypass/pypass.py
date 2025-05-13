@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
 import polars as pl, sqlite3
-import hashlib, binascii, os, pathlib, datetime, argparse, base64, getpass, sys, pyclip, threading, time, secrets, string, signal
+import \
+    hashlib, binascii, os, pathlib, datetime, argparse, base64, \
+    getpass, sys, pyclip, threading, time, secrets, string, signal, \
+    logging, platform
+from logging.handlers import SysLogHandler
 from threading import Timer
 from queue import Queue
 from dataclasses import dataclass, field, asdict
@@ -14,6 +18,7 @@ from rich.panel import Panel
 from rich.live import Live
 from rich.theme import Theme
 from rich import print
+from rich.logging import RichHandler
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
 import string
@@ -692,12 +697,8 @@ def delete_data_entry(console: Console, response: str, db: SQLManager):
         
 
 def edit_data_entry(console: Console, response: str, db: SQLManager):
-    response_list = response.split()
-    if 'e' in response_list:
-        response_list.remove('e')
-    else:
-        console.print('    Data Entry Deletion Error', style='error')
-    id_int = int(response_list[0])
+    _, idx = tuple(response.split('e'))
+    id_int = int(idx)
     table, df = db.data_entry_by_id(id_int, console)
 
     console.print(Panel(table, title='Password Entry', border_style="bright_blue"), justify='center')
@@ -930,20 +931,60 @@ def interactive_mode(console: Console):
     return db
 
 
+def configure_logging():
+    theme = Theme({
+        # your markup styles
+        "aqua": "#00A6A9", 
+        "purple": "#C500B7", 
+        "red": "#D10015",
+        "error": "#D10015",
+        "green": '#00CB05',
+        "success": '#00CB05',
+        'yellow': '#F2E900',
+        'alert': '#ff9933',
+        # now the logging.level keys must be real style specs:
+        "logging.level.DEBUG":    "#C500B7",                 # purple
+        "logging.level.INFO":     "#00A6A9",                 # aqua
+        "logging.level.WARNING":  "#F2E900 bold",            # yellow + bold
+        "logging.level.ERROR":    "#D10015 bold",            # red + bold
+        "logging.level.CRITICAL": "white on red bold",       # white on red bg
+    })
+
+    console = Console(theme=theme)
+
+    # 2) RichHandler without any level_styles kwarg
+    handler = RichHandler(
+        console=console,
+        show_time=True,
+        show_level=True,
+        rich_tracebacks=True,
+    )
+
+    logger = logging.getLogger("pypass")
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(handler)
+
+    # 3) Optional SysLogHandler for journalctl on Linux
+    if platform.system() == "Linux":
+        for sock in ("/run/systemd/journal/syslog", "/dev/log"):
+            if os.path.exists(sock):
+                try:
+                    syslog = SysLogHandler(address=sock)
+                    syslog.ident = "pypass: "
+                    syslog.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+                    logger.addHandler(syslog)
+                except Exception as e:
+                    logger.warning(f"Could not attach SysLogHandler ({sock}): {e}")
+                break
+
+    return logger, console
+
 def main():
+    global logger
+    logger, console = configure_logging()
     try:
-        pypass_theme = Theme({
-            "aqua": "#00A6A9", 
-            "purple": "#C500B7", 
-            "red": "#D10015",
-            "error": "#D10015",
-            "green": '#00CB05',
-            "success": '#00CB05',
-            'yellow': '#F2E900',
-            'alert': '#ff9933'
-        })
         clear_terminal()
-        console = Console(theme=pypass_theme)
+        logger.info('PyPass Started')
         try:
             if len(sys.argv) > 1:
                 db = args_actions(console)
