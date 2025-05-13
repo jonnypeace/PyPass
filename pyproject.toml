@@ -1,12 +1,12 @@
 [project]
 name = "pypass"
-version = "0.1.3"
+version = "0.1.4"
 description = "A local password manager using rich, polars, and more"
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "Your Name", email = "you@example.com" }]
 dependencies = [
-    "rich",
+    "rich>=10.2,<15.0",
     "polars",
     "cryptography",
     "pyclip",
